@@ -1,5 +1,5 @@
 {
-  "name": "goalseer",
+  "name": "nextjs-postgresql-template",
   "private": true,
   "scripts": {
     "dev": "next dev",

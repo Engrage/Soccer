@@ -4,7 +4,6 @@ import { getAllLeagues, getMatchesForDay, summarise } from "@/lib/queries";
 import { addDays, dayKeyFrom, todayKey } from "@/lib/dates";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
 
 export async function GET(request: Request) {
   const url = new URL(request.url);

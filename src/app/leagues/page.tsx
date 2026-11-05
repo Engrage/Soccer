@@ -6,7 +6,6 @@ import { longDayLabel, todayKey } from "@/lib/dates";
 import { getAllLeagues, getMatchesForDay, summarise } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
 
 export const metadata: Metadata = {
   title: "All leagues covered",

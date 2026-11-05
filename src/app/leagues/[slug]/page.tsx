@@ -7,7 +7,6 @@ import { getAllLeagues, getLeagueBySlug, getTeamsForLeague } from "@/lib/queries
 import { fetchStandings } from "@/lib/espn";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
 
 export async function generateMetadata({
   params,

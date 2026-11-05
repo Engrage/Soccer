@@ -1,8 +1,27 @@
-import { addDays, dateFromKey, dayKeyFrom, formatDayNumber, isValidDayKey, shortDayLabel, todayKey } from "@/lib/dates";
-import { LEAGUES } from "@/lib/data";
-import { getAllLeagues, getMatchesForDay, summarise, type BoardSummary, type MatchView } from "@/lib/queries";
+import { and, gte, lt, sql } from "drizzle-orm";
 
-export const PAGE_SIZE = 24;
+import { db } from "@/db";
+import { matches } from "@/db/schema";
+import {
+  addDays,
+  dayKeyFrom,
+  formatDayNumber,
+  isValidDayKey,
+  parseDayKey,
+  relativeLabel,
+  shortDayLabel,
+  todayKey,
+  weekdayLabel,
+} from "@/lib/dates";
+import {
+  getAllLeagues,
+  getMatchesForDay,
+  summarise,
+  type DaySummary,
+  type LeagueView,
+  type MatchView,
+} from "@/lib/queries";
+import { ensureDays } from "@/lib/seed";
 
 export const MARKET_OPTIONS = [
   { value: "home", label: "Home win" },
@@ -17,9 +36,9 @@ export const MARKET_OPTIONS = [
   { value: "double-12", label: "Double chance 12" },
   { value: "double-x2", label: "Double chance X2" },
   { value: "value", label: "Positive value edge" },
-] as const;
+];
 
-export type SearchParamsInput = Record<string, string | string[] | undefined>;
+export const PAGE_SIZE = 36;
 
 export type BoardParams = {
   date: string;
@@ -28,149 +47,195 @@ export type BoardParams = {
   q: string;
   sort: string;
   minConfidence: number;
+  rankMarket: string;
   page: number;
-  rankMarket?: string;
 };
 
-export type DayOption = { key: string; label: string; sub: string; count: number };
+export type SearchParamsInput = Record<string, string | string[] | undefined>;
 
-export type BoardGroup = { league: (typeof LEAGUES)[number]; matches: MatchView[] };
+function first(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) return value[0];
+  return value;
+}
 
-export type BoardData = {
+export function parseBoardParams(
+  searchParams: SearchParamsInput,
+  defaults: Partial<BoardParams> = {},
+): BoardParams {
+  const dateRaw = first(searchParams.date);
+  const fallbackDate = defaults.date ?? todayKey();
+  const minConfRaw = Number(first(searchParams.minConfidence) ?? 0);
+  const pageRaw = Number(first(searchParams.page) ?? 1);
+  return {
+    page: Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1,
+    date: isValidDayKey(dateRaw) ? dateRaw : fallbackDate,
+    league: first(searchParams.league) ?? defaults.league ?? "all",
+    market: first(searchParams.market) ?? defaults.market ?? "all",
+    q: (first(searchParams.q) ?? "").trim(),
+    sort: first(searchParams.sort) ?? defaults.sort ?? "kickoff",
+    minConfidence: Number.isFinite(minConfRaw) ? Math.min(95, Math.max(0, minConfRaw)) : 0,
+    rankMarket: first(searchParams.rank) ?? defaults.rankMarket ?? "all",
+  };
+}
+
+export type BoardResult = {
+  params: BoardParams;
+  days: { key: string; label: string; sub: string; count: number }[];
+  leagues: LeagueView[];
+  /** Paginated slice rendered by the board. */
   rows: MatchView[];
+  /** Full filtered set (used by the JSON API). */
   allRows: MatchView[];
-  summary: BoardSummary;
   filteredCount: number;
   pageCount: number;
-  days: DayOption[];
-  leagues: typeof LEAGUES;
-  groups: BoardGroup[];
+  groups: { league: LeagueView; matches: MatchView[] }[];
+  summary: DaySummary;
   topPicks: MatchView[];
 };
 
-function first(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
+const DAYS_BACK = 2;
+const DAYS_FORWARD = 4;
+
+export function dayWindow(): string[] {
+  const today = parseDayKey(todayKey());
+  const keys: string[] = [];
+  for (let offset = -DAYS_BACK; offset <= DAYS_FORWARD; offset += 1) {
+    keys.push(dayKeyFrom(addDays(today, offset)));
+  }
+  return keys;
 }
 
-export function parseBoardParams(input: SearchParamsInput, defaults?: Partial<BoardParams>): BoardParams {
-  const rawDate = first(input.date) ?? defaults?.date ?? todayKey();
-  const date = isValidDayKey(rawDate) ? rawDate : todayKey();
-  const league = first(input.league) ?? defaults?.league ?? "all";
-  const market = first(input.market) ?? defaults?.market ?? "all";
-  const sort = first(input.sort) ?? defaults?.sort ?? "kickoff";
-  const q = (first(input.q) ?? "").trim();
-  const minConfidence = Number(first(input.minConfidence) ?? 0) || 0;
-  const page = Math.max(1, Number(first(input.page) ?? 1) || 1);
-  return {
-    date,
-    league: LEAGUES.some((item) => item.slug === league) ? league : "all",
-    market: market === "all" || MARKET_OPTIONS.some((option) => option.value === market) ? market : "all",
-    q,
-    sort: ["kickoff", "confidence", "value", "probability", "goals"].includes(sort) ? sort : "kickoff",
-    minConfidence: Math.max(0, Math.min(95, minConfidence)),
-    page,
-    rankMarket: defaults?.rankMarket,
-  };
+function marketMatches(match: MatchView, market: string): boolean {
+  if (market === "all") return true;
+  const prediction = match.prediction;
+  if (!prediction) return false;
+  if (market === "value") return prediction.valueEdge > 0.04;
+  return prediction.tip === market || prediction.altTip === market;
 }
 
 function marketProbability(match: MatchView, market: string): number {
   const prediction = match.prediction;
   if (!prediction) return 0;
   switch (market) {
-    case "home": return prediction.probHome;
-    case "draw": return prediction.probDraw;
-    case "away": return prediction.probAway;
-    case "over-2.5": return prediction.probOver25;
-    case "under-2.5": return 1 - prediction.probOver25;
-    case "over-3.5": return prediction.probOver35;
-    case "btts-yes": return prediction.probBtts;
-    case "btts-no": return 1 - prediction.probBtts;
-    case "double-1x": return prediction.probHome + prediction.probDraw;
-    case "double-12": return prediction.probHome + prediction.probAway;
-    case "double-x2": return prediction.probDraw + prediction.probAway;
-    default: return prediction.tipProbability;
+    case "home":
+      return prediction.probHome;
+    case "draw":
+      return prediction.probDraw;
+    case "away":
+      return prediction.probAway;
+    case "over-2.5":
+      return prediction.probOver25;
+    case "under-2.5":
+      return 1 - prediction.probOver25;
+    case "over-1.5":
+      return prediction.probOver15;
+    case "over-3.5":
+      return prediction.probOver35;
+    case "btts-yes":
+      return prediction.probBtts;
+    case "btts-no":
+      return 1 - prediction.probBtts;
+    case "double-1x":
+      return prediction.doubleChance.find((line) => line.outcome === "1X")?.probability ?? 0;
+    case "double-12":
+      return prediction.doubleChance.find((line) => line.outcome === "12")?.probability ?? 0;
+    case "double-x2":
+      return prediction.doubleChance.find((line) => line.outcome === "X2")?.probability ?? 0;
+    default:
+      return prediction.tipProbability;
   }
 }
 
-function simulatedDayCount(dateKey: string): number {
-  let total = 0;
-  for (const league of LEAGUES) {
-    const seed = Array.from(`${dateKey}:${league.slug}`).reduce((sum, char) => sum + char.charCodeAt(0), 0);
-    total += 2 + (seed % 3);
-  }
-  return total;
-}
+export async function loadBoard(params: BoardParams): Promise<BoardResult> {
+  const window = dayWindow();
+  await ensureDays(window);
 
-export async function loadBoard(params: BoardParams): Promise<BoardData> {
-  const [leagues, matches] = await Promise.all([getAllLeagues(), getMatchesForDay(params.date)]);
-  const summary = summarise(params.date, matches);
-  const query = params.q.toLowerCase();
-  const filtered = matches.filter((match) => {
+  const rangeStart = parseDayKey(window[0]);
+  const rangeEnd = addDays(parseDayKey(window[window.length - 1]), 1);
+
+  const countRows = await db
+    .select({
+      day: sql<string>`to_char(${matches.kickoff}, 'YYYY-MM-DD')`,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(matches)
+    .where(and(gte(matches.kickoff, rangeStart), lt(matches.kickoff, rangeEnd)))
+    .groupBy(sql`to_char(${matches.kickoff}, 'YYYY-MM-DD')`);
+
+  const counts = new Map(countRows.map((row) => [row.day, row.count]));
+  const [leagueList, dayRows] = await Promise.all([getAllLeagues(), getMatchesForDay(params.date)]);
+
+  const needle = params.q.toLowerCase();
+  const filtered = dayRows.filter((match) => {
     if (!match.prediction) return false;
     if (params.league !== "all" && match.league.slug !== params.league) return false;
-    if (params.market !== "all") {
-      if (params.market === "value") {
-        if (match.prediction.valueEdge <= 0.04) return false;
-      } else if (match.prediction.tipMarket !== params.market) {
-        return false;
-      }
-    }
-    if (match.prediction.confidence < params.minConfidence) return false;
-    if (query) {
+    if (params.minConfidence > 0 && match.prediction.confidence < params.minConfidence) return false;
+    if (!marketMatches(match, params.market)) return false;
+    if (needle) {
       const haystack = `${match.home.name} ${match.away.name} ${match.league.name} ${match.league.country}`.toLowerCase();
-      if (!haystack.includes(query)) return false;
+      if (!haystack.includes(needle)) return false;
     }
     return true;
   });
 
-  filtered.sort((a, b) => {
-    const pa = a.prediction!;
-    const pb = b.prediction!;
+  const sorted = [...filtered].sort((a, b) => {
     switch (params.sort) {
-      case "confidence": return pb.confidence - pa.confidence;
-      case "value": return pb.valueEdge - pa.valueEdge;
+      case "confidence":
+        return b.prediction!.confidence - a.prediction!.confidence;
+      case "value":
+        return b.prediction!.valueEdge - a.prediction!.valueEdge;
       case "probability": {
-        if (params.rankMarket) return marketProbability(b, params.rankMarket) - marketProbability(a, params.rankMarket);
-        return pb.tipProbability - pa.tipProbability;
+        const rankMarket = params.rankMarket !== "all" ? params.rankMarket : params.market;
+        return (
+          marketProbability(b, rankMarket) - marketProbability(a, rankMarket) ||
+          b.prediction!.confidence - a.prediction!.confidence
+        );
       }
-      case "goals": return (pb.expectedHome + pb.expectedAway) - (pa.expectedHome + pa.expectedAway);
-      default: return a.kickoff.localeCompare(b.kickoff);
+      case "goals":
+        return (
+          b.prediction!.expectedHome +
+          b.prediction!.expectedAway -
+          (a.prediction!.expectedHome + a.prediction!.expectedAway)
+        );
+      default:
+        return 0;
     }
   });
 
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageCount = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const page = Math.min(params.page, pageCount);
-  const rows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  const groups: BoardGroup[] = [];
-  for (const match of rows) {
-    const group = groups.find((item) => item.league.id === match.league.id);
-    if (group) group.matches.push(match);
-    else groups.push({ league: match.league, matches: [match] });
-  }
+  const rows = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  const topPicks = [...filtered].sort((a, b) => (b.prediction?.confidence ?? 0) - (a.prediction?.confidence ?? 0)).slice(0, 3);
-  const today = todayKey();
-  const days: DayOption[] = Array.from({ length: 7 }, (_, index) => {
-    const date = dateFromKey(params.date);
-    const day = dayKeyFrom(addDays(date, index - 1));
-    const count = day === params.date ? matches.length : simulatedDayCount(day);
-    return {
-      key: day,
-      label: shortDayLabel(day),
-      sub: day === today ? "Today" : formatDayNumber(day),
-      count,
-    };
-  });
+  const groupMap = new Map<number, { league: LeagueView; matches: MatchView[] }>();
+  for (const match of rows) {
+    const bucket = groupMap.get(match.league.id) ?? { league: match.league, matches: [] };
+    bucket.matches.push(match);
+    groupMap.set(match.league.id, bucket);
+  }
+  const groups = [...groupMap.values()];
 
   return {
-    rows,
-    allRows: filtered,
-    summary,
-    filteredCount: filtered.length,
+    allRows: sorted,
+    filteredCount: sorted.length,
     pageCount,
-    days,
-    leagues,
+    params: { ...params, page },
+    days: window.map((key) => {
+      const relative = relativeLabel(key);
+      const isRelativeDay = relative !== shortDayLabel(key);
+      return {
+        key,
+        label: formatDayNumber(key),
+        sub: isRelativeDay ? relative : weekdayLabel(key),
+        count: counts.get(key) ?? 0,
+      };
+    }),
+    leagues: leagueList,
+    rows,
     groups,
-    topPicks,
+    summary: summarise(params.date, dayRows),
+    topPicks: [...dayRows]
+      .filter((match) => match.prediction && match.status !== "finished")
+      .sort((a, b) => b.prediction!.confidence - a.prediction!.confidence)
+      .slice(0, 3),
   };
 }

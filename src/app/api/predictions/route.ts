@@ -3,7 +3,6 @@ import { NextResponse } from "next/server";
 import { loadBoard, parseBoardParams, MARKET_OPTIONS, PAGE_SIZE } from "@/lib/board";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
 
 function lean(row: Awaited<ReturnType<typeof loadBoard>>["rows"][number]) {
   const prediction = row.prediction!;

@@ -4,7 +4,6 @@ import { PredictionBoard } from "@/components/prediction-board";
 import { todayKey } from "@/lib/dates";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
 
 export const metadata: Metadata = {
   title: "Football predictions today",

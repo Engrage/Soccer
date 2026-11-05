@@ -3,7 +3,6 @@ import type { Metadata } from "next";
 import { PredictionBoard } from "@/components/prediction-board";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
 
 export const metadata: Metadata = {
   title: "Value bets & positive edge picks",

@@ -9,7 +9,6 @@ import { scoreMatrix, MAX_GOALS } from "@/lib/predict";
 import { getMatchById, getMatchesForDay } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
 
 const pct = (value: number) => `${(value * 100).toFixed(1)}%`;
 
