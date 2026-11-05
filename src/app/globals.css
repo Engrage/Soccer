@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink-950: #05070f;
+  --color-ink-900: #080c17;
+  --color-ink-850: #0b1120;
+  --color-ink-800: #0f172a;
+  --color-ink-700: #16203a;
+  --color-brand-400: #38f8c8;
+  --color-brand-500: #16d6a0;
+  --color-brand-600: #0ea37f;
+  --color-signal-400: #7dd3fc;
+  --color-warn-400: #fbbf24;
+  --color-danger-400: #fb7185;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background-color: #05070f;
+}
+
+body {
+  background-image:
+    radial-gradient(1200px 600px at 15% -10%, rgba(22, 214, 160, 0.16), transparent 60%),
+    radial-gradient(900px 500px at 90% 0%, rgba(56, 189, 248, 0.13), transparent 55%),
+    linear-gradient(180deg, #05070f 0%, #070b16 45%, #05070f 100%);
+  background-attachment: fixed;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 999px;
+}
+
+@layer components {
+  .panel {
+    @apply rounded-2xl border border-white/10 bg-white/[0.03] backdrop-blur-sm;
+  }
+
+  .panel-tight {
+    @apply rounded-xl border border-white/10 bg-white/[0.02];
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-medium text-slate-300;
+  }
+
+  .chip-accent {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-300;
+  }
+
+  .label {
+    @apply text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3.5 py-2 text-sm font-medium text-slate-200 transition hover:border-emerald-400/40 hover:bg-emerald-400/10 hover:text-emerald-200;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-400 to-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:brightness-110;
+  }
+
+  .field {
+    @apply w-full appearance-none rounded-xl border border-white/10 bg-ink-900/80 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-emerald-400/50;
+  }
+
+  .stat-value {
+    @apply text-2xl font-semibold tracking-tight text-white;
+  }
+}
+
+@keyframes pulse-live {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.85);
+  }
+}
+
+.live-dot {
+  animation: pulse-live 1.4s ease-in-out infinite;
+}
